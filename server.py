@@ -390,6 +390,13 @@ MOUSEEVENTF_RIGHTDOWN = 0x0008
 MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_WHEEL = 0x0800
 KEYEVENTF_KEYUP = 0x0002
+VK_MAP = {
+    "ctrl": 0x11, "control": 0x11, "shift": 0x10, "alt": 0x12,
+    "enter": 0x0D, "return": 0x0D, "esc": 0x1B, "escape": 0x1B,
+    "tab": 0x09, "backspace": 0x08, "delete": 0x2E, "del": 0x2E,
+    "space": 0x20, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+}
 
 
 class MOUSEINPUT(ctypes.Structure):
@@ -452,7 +459,43 @@ def native_mouse_click(x: int, y: int, button: str = "left", clicks: int = 1, mo
         time.sleep(0.08)
 
 
-def native_type_human(text: str, enter: bool = False, min_delay_ms: int = 35, max_delay_ms: int = 120):
+def _vk_for_key(key: Any) -> int:
+    name = str(key).lower()
+    if name in VK_MAP:
+        return VK_MAP[name]
+    if len(name) == 1:
+        return ord(name.upper())
+    if name.startswith("f") and name[1:].isdigit():
+        n = int(name[1:])
+        if 1 <= n <= 24:
+            return 0x6F + n
+    raise ValueError(f"unsupported key: {key}")
+
+
+def native_hotkey(keys: list[Any], hold_ms: int = 40):
+    vks = [_vk_for_key(k) for k in keys]
+    for vk in vks:
+        _send_key(vk, keyup=False)
+        time.sleep(0.025)
+    time.sleep(max(0, hold_ms) / 1000.0)
+    for vk in reversed(vks):
+        _send_key(vk, keyup=True)
+        time.sleep(0.025)
+
+
+def native_key_press(key: Any, presses: int = 1):
+    vk = _vk_for_key(key)
+    for _ in range(max(1, int(presses))):
+        _send_key(vk, keyup=False)
+        time.sleep(0.035)
+        _send_key(vk, keyup=True)
+        time.sleep(0.06)
+
+
+def native_type_human(text: str, enter: bool = False, min_delay_ms: int = 35, max_delay_ms: int = 120, clear: bool = False):
+    if clear:
+        native_hotkey(["ctrl", "a"])
+        native_key_press("backspace")
     if HAS_UIA:
         import random
         with use_uia as uia:
@@ -460,7 +503,7 @@ def native_type_human(text: str, enter: bool = False, min_delay_ms: int = 35, ma
                 uia.SendKeys(ch, waitTime=0)
                 time.sleep(random.uniform(min_delay_ms, max_delay_ms) / 1000.0)
             if enter:
-                uia.SendKeys("{Enter}", waitTime=0.05)
+                native_key_press("enter")
         return
     action_type(text, enter=enter)
 
@@ -588,8 +631,16 @@ def ws_action_mouse_scroll(args: dict) -> Dict[str, Any]:
 
 def ws_action_type_human(args: dict) -> Dict[str, Any]:
     text = str(args.get("text", ""))
-    native_type_human(text, enter=bool(args.get("enter", False)), min_delay_ms=int(args.get("min_delay_ms", 35)), max_delay_ms=int(args.get("max_delay_ms", 120)))
-    return {"status": "ok", "chars": len(text), "enter": bool(args.get("enter", False))}
+    native_type_human(text, enter=bool(args.get("enter", False)), min_delay_ms=int(args.get("min_delay_ms", 35)), max_delay_ms=int(args.get("max_delay_ms", 120)), clear=bool(args.get("clear", False)))
+    return {"status": "ok", "chars": len(text), "enter": bool(args.get("enter", False)), "clear": bool(args.get("clear", False))}
+
+
+def ws_action_key_press(args: dict) -> Dict[str, Any]:
+    key = args.get("key")
+    if not key:
+        raise ValueError("key is required")
+    native_key_press(key, presses=int(args.get("presses", 1)))
+    return {"status": "ok", "key": key, "presses": int(args.get("presses", 1))}
 
 
 def ws_action_hotkey(args: dict) -> Dict[str, Any]:
@@ -598,13 +649,8 @@ def ws_action_hotkey(args: dict) -> Dict[str, Any]:
         keys = [part.strip() for part in keys.split("+") if part.strip()]
     if not keys:
         raise ValueError("keys are required")
-    combo = "".join({"ctrl": "^", "control": "^", "alt": "%", "shift": "+"}.get(str(k).lower(), f"{{{k}}}" if len(str(k)) > 1 else str(k)) for k in keys)
-    if HAS_UIA:
-        with use_uia as uia:
-            uia.SendKeys(combo, waitTime=float(args.get("wait", 0.05)))
-    else:
-        raise RuntimeError("hotkey requires uiautomation")
-    return {"status": "ok", "keys": keys, "combo": combo}
+    native_hotkey(keys, hold_ms=int(args.get("hold_ms", 50)))
+    return {"status": "ok", "keys": keys}
 
 
 def _chrome_element_rect(element_id: str) -> Dict[str, Any]:
@@ -633,8 +679,8 @@ def ws_action_chrome_type_human(args: dict) -> Dict[str, Any]:
         point = _center_from_rect(_chrome_element_rect(element_id))
         native_mouse_click(point["x"], point["y"], button="left", clicks=1, move_ms=int(args.get("move_ms", 180)))
     text = str(args.get("text", ""))
-    native_type_human(text, enter=bool(args.get("enter", False)), min_delay_ms=int(args.get("min_delay_ms", 35)), max_delay_ms=int(args.get("max_delay_ms", 120)))
-    return {"status": "ok", "element_id": element_id, "chars": len(text), "enter": bool(args.get("enter", False))}
+    native_type_human(text, enter=bool(args.get("enter", False)), min_delay_ms=int(args.get("min_delay_ms", 35)), max_delay_ms=int(args.get("max_delay_ms", 120)), clear=bool(args.get("clear", False)))
+    return {"status": "ok", "element_id": element_id, "chars": len(text), "enter": bool(args.get("enter", False)), "clear": bool(args.get("clear", False))}
 
 
 def ws_action_chrome_state(args: dict) -> Dict[str, Any]:
@@ -667,6 +713,7 @@ def ws_actions() -> Dict[str, Any]:
         "mouse_double_click": lambda args: ws_action_mouse_click({**args, "clicks": 2}),
         "mouse_scroll": ws_action_mouse_scroll,
         "type_human": ws_action_type_human,
+        "key_press": ws_action_key_press,
         "hotkey": ws_action_hotkey,
         "chrome_state": ws_action_chrome_state,
         "chrome_click": lambda args: ws_action_chrome_command("click", args),
