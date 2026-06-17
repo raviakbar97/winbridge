@@ -380,6 +380,89 @@ def make_update_bundle_staging(upload) -> Path:
     return staging_dir
 
 
+# ---- native input helpers ----
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_WHEEL = 0x0800
+KEYEVENTF_KEYUP = 0x0002
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
+class INPUT_UNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("union", INPUT_UNION)]
+
+
+SendInput = user32.SendInput
+SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+
+
+def _send_mouse(flags: int, data: int = 0):
+    extra = ctypes.c_ulong(0)
+    inp = INPUT(type=INPUT_MOUSE, union=INPUT_UNION(mi=MOUSEINPUT(0, 0, data, flags, 0, ctypes.pointer(extra))))
+    SendInput(1, ctypes.pointer(inp), ctypes.sizeof(INPUT))
+
+
+def _send_key(vk: int, keyup: bool = False):
+    extra = ctypes.c_ulong(0)
+    flags = KEYEVENTF_KEYUP if keyup else 0
+    inp = INPUT(type=INPUT_KEYBOARD, union=INPUT_UNION(ki=KEYBDINPUT(vk, 0, flags, 0, ctypes.pointer(extra))))
+    SendInput(1, ctypes.pointer(inp), ctypes.sizeof(INPUT))
+
+
+def _center_from_rect(rect: Dict[str, Any]) -> Dict[str, int]:
+    return {"x": int(rect["x"] + rect.get("w", 0) / 2), "y": int(rect["y"] + rect.get("h", 0) / 2)}
+
+
+def native_mouse_move(x: int, y: int, duration_ms: int = 0):
+    start_x, start_y = win32api.GetCursorPos()
+    steps = max(1, min(60, int(duration_ms / 12))) if duration_ms else 1
+    for i in range(1, steps + 1):
+        nx = int(start_x + (x - start_x) * i / steps)
+        ny = int(start_y + (y - start_y) * i / steps)
+        user32.SetCursorPos(nx, ny)
+        if steps > 1:
+            time.sleep(duration_ms / steps / 1000.0)
+
+
+def native_mouse_click(x: int, y: int, button: str = "left", clicks: int = 1, move_ms: int = 180):
+    native_mouse_move(x, y, move_ms)
+    down, up = (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP) if button == "right" else (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
+    for _ in range(max(1, int(clicks))):
+        _send_mouse(down)
+        time.sleep(0.045)
+        _send_mouse(up)
+        time.sleep(0.08)
+
+
+def native_type_human(text: str, enter: bool = False, min_delay_ms: int = 35, max_delay_ms: int = 120):
+    if HAS_UIA:
+        import random
+        with use_uia as uia:
+            for ch in text:
+                uia.SendKeys(ch, waitTime=0)
+                time.sleep(random.uniform(min_delay_ms, max_delay_ms) / 1000.0)
+            if enter:
+                uia.SendKeys("{Enter}", waitTime=0.05)
+        return
+    action_type(text, enter=enter)
+
+
 # ---- WebSocket action helpers ----
 def get_screen_state_data() -> Dict[str, Any]:
     hwnd = win32gui.GetForegroundWindow()
@@ -480,6 +563,63 @@ def ws_action_volume_toggle_mute(args: dict) -> Dict[str, Any]:
     return volume_toggle_mute()
 
 
+def ws_action_mouse_move(args: dict) -> Dict[str, Any]:
+    x = int(args.get("x"))
+    y = int(args.get("y"))
+    native_mouse_move(x, y, int(args.get("duration_ms", 180)))
+    return {"status": "ok", "x": x, "y": y}
+
+
+def ws_action_mouse_click(args: dict) -> Dict[str, Any]:
+    x = int(args.get("x"))
+    y = int(args.get("y"))
+    button = str(args.get("button", "left"))
+    native_mouse_click(x, y, button=button, clicks=int(args.get("clicks", 1)), move_ms=int(args.get("move_ms", 180)))
+    return {"status": "ok", "x": x, "y": y, "button": button}
+
+
+def ws_action_mouse_scroll(args: dict) -> Dict[str, Any]:
+    delta = int(args.get("delta", -480))
+    _send_mouse(MOUSEEVENTF_WHEEL, delta)
+    return {"status": "ok", "delta": delta}
+
+
+def ws_action_type_human(args: dict) -> Dict[str, Any]:
+    text = str(args.get("text", ""))
+    native_type_human(text, enter=bool(args.get("enter", False)), min_delay_ms=int(args.get("min_delay_ms", 35)), max_delay_ms=int(args.get("max_delay_ms", 120)))
+    return {"status": "ok", "chars": len(text), "enter": bool(args.get("enter", False))}
+
+
+def _chrome_element_rect(element_id: str) -> Dict[str, Any]:
+    state = CHROME.get_state()
+    for element in state.get("elements", []):
+        if element.get("id") == element_id:
+            rect = element.get("screen_rect") or element.get("rect")
+            if not rect:
+                raise ValueError(f"element has no rect: {element_id}")
+            return rect
+    raise ValueError(f"element not found in latest chrome_state: {element_id}")
+
+
+def ws_action_chrome_mouse_click(args: dict) -> Dict[str, Any]:
+    element_id = args.get("element_id")
+    if not element_id:
+        raise ValueError("element_id is required")
+    point = _center_from_rect(_chrome_element_rect(element_id))
+    native_mouse_click(point["x"], point["y"], button=str(args.get("button", "left")), clicks=int(args.get("clicks", 1)), move_ms=int(args.get("move_ms", 180)))
+    return {"status": "ok", "element_id": element_id, **point, "button": str(args.get("button", "left"))}
+
+
+def ws_action_chrome_type_human(args: dict) -> Dict[str, Any]:
+    element_id = args.get("element_id")
+    if element_id:
+        point = _center_from_rect(_chrome_element_rect(element_id))
+        native_mouse_click(point["x"], point["y"], button="left", clicks=1, move_ms=int(args.get("move_ms", 180)))
+    text = str(args.get("text", ""))
+    native_type_human(text, enter=bool(args.get("enter", False)), min_delay_ms=int(args.get("min_delay_ms", 35)), max_delay_ms=int(args.get("max_delay_ms", 120)))
+    return {"status": "ok", "element_id": element_id, "chars": len(text), "enter": bool(args.get("enter", False))}
+
+
 def ws_action_chrome_state(args: dict) -> Dict[str, Any]:
     return CHROME.get_state()
 
@@ -504,10 +644,20 @@ def ws_actions() -> Dict[str, Any]:
         "volume_mute": ws_action_volume_mute,
         "volume_unmute": ws_action_volume_unmute,
         "volume_toggle_mute": ws_action_volume_toggle_mute,
+        "mouse_move": ws_action_mouse_move,
+        "mouse_click": ws_action_mouse_click,
+        "mouse_right_click": lambda args: ws_action_mouse_click({**args, "button": "right"}),
+        "mouse_double_click": lambda args: ws_action_mouse_click({**args, "clicks": 2}),
+        "mouse_scroll": ws_action_mouse_scroll,
+        "type_human": ws_action_type_human,
         "chrome_state": ws_action_chrome_state,
         "chrome_click": lambda args: ws_action_chrome_command("click", args),
         "chrome_right_click": lambda args: ws_action_chrome_command("right_click", args),
+        "chrome_mouse_click": ws_action_chrome_mouse_click,
+        "chrome_mouse_right_click": lambda args: ws_action_chrome_mouse_click({**args, "button": "right"}),
+        "chrome_mouse_double_click": lambda args: ws_action_chrome_mouse_click({**args, "clicks": 2}),
         "chrome_type": lambda args: ws_action_chrome_command("type", args),
+        "chrome_type_human": ws_action_chrome_type_human,
         "chrome_navigate": lambda args: ws_action_chrome_command("navigate", args),
         "chrome_new_tab": lambda args: ws_action_chrome_command("new_tab", args),
         "chrome_tabs": lambda args: ws_action_chrome_command("tabs", args),

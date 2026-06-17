@@ -36,6 +36,8 @@
 
   function describeElement(el, index) {
     const rect = el.getBoundingClientRect();
+    const chromeLeft = Math.round(window.screenX + Math.max(0, (window.outerWidth - window.innerWidth) / 2));
+    const chromeTop = Math.round(window.screenY + Math.max(0, window.outerHeight - window.innerHeight));
     return {
       id: `wb_${index}`,
       tag: el.tagName.toLowerCase(),
@@ -50,6 +52,12 @@
       rect: {
         x: Math.round(rect.x),
         y: Math.round(rect.y),
+        w: Math.round(rect.width),
+        h: Math.round(rect.height)
+      },
+      screen_rect: {
+        x: Math.round(chromeLeft + rect.x),
+        y: Math.round(chromeTop + rect.y),
         w: Math.round(rect.width),
         h: Math.round(rect.height)
       },
