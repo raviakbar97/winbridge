@@ -31,6 +31,7 @@ from updater import STATUS_FILE, safe_extract_zip
 from agent_ws import dispatch_ws_message, validate_path
 from agent_session import SessionStore
 from chrome_bridge import ChromeBridge
+from audio_control import volume_get, volume_set, volume_mute, volume_toggle_mute
 
 try:
     import uiautomation as auto
@@ -440,6 +441,45 @@ def ws_action_list_dir(args: dict) -> Dict[str, Any]:
     return {"path": str(path), "count": len(entries), "entries": entries}
 
 
+def ws_action_minimize_all(args: dict) -> Dict[str, Any]:
+    if not HAS_WIN32COM:
+        raise RuntimeError("minimize_all requires win32com")
+    if HAS_COM:
+        CoInitialize()
+    try:
+        shell = win32com.client.Dispatch("Shell.Application")
+        shell.MinimizeAll()
+        time.sleep(0.3)
+        windows = enum_windows()
+        minimized = [w for w in windows if w.get("state") == "minimized"]
+        return {"status": "ok", "minimized_count": len(minimized), "window_count": len(windows)}
+    finally:
+        if HAS_COM:
+            CoUninitialize()
+
+
+def ws_action_volume_get(args: dict) -> Dict[str, Any]:
+    return volume_get()
+
+
+def ws_action_volume_set(args: dict) -> Dict[str, Any]:
+    if "level" not in args:
+        raise ValueError("level is required")
+    return volume_set(args.get("level"))
+
+
+def ws_action_volume_mute(args: dict) -> Dict[str, Any]:
+    return volume_mute(True)
+
+
+def ws_action_volume_unmute(args: dict) -> Dict[str, Any]:
+    return volume_mute(False)
+
+
+def ws_action_volume_toggle_mute(args: dict) -> Dict[str, Any]:
+    return volume_toggle_mute()
+
+
 def ws_action_chrome_state(args: dict) -> Dict[str, Any]:
     return CHROME.get_state()
 
@@ -458,6 +498,12 @@ def ws_actions() -> Dict[str, Any]:
         "mkdir": ws_action_mkdir,
         "path_exists": ws_action_path_exists,
         "list_dir": ws_action_list_dir,
+        "minimize_all": ws_action_minimize_all,
+        "volume_get": ws_action_volume_get,
+        "volume_set": ws_action_volume_set,
+        "volume_mute": ws_action_volume_mute,
+        "volume_unmute": ws_action_volume_unmute,
+        "volume_toggle_mute": ws_action_volume_toggle_mute,
         "chrome_state": ws_action_chrome_state,
         "chrome_click": lambda args: ws_action_chrome_command("click", args),
         "chrome_type": lambda args: ws_action_chrome_command("type", args),

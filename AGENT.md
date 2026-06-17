@@ -528,7 +528,27 @@ List directory entries.
 {"id":"7","type":"action","action":"list_dir","args":{"path":"E:\\","limit":20}}
 ```
 
-### 7.8 `chrome_state`
+### 7.8 `minimize_all`
+
+Minimize user-facing windows using Windows Shell automation.
+
+```json
+{"id":"8","type":"action","action":"minimize_all","args":{}}
+```
+
+### 7.9 Audio actions
+
+Control Windows master volume. Requires `pycaw` on the Windows PC.
+
+```json
+{"id":"9","type":"action","action":"volume_get","args":{}}
+{"id":"10","type":"action","action":"volume_set","args":{"level":25}}
+{"id":"11","type":"action","action":"volume_mute","args":{}}
+{"id":"12","type":"action","action":"volume_unmute","args":{}}
+{"id":"13","type":"action","action":"volume_toggle_mute","args":{}}
+```
+
+### 7.10 `chrome_state`
 
 Return the latest DOM state pushed by the Chrome extension.
 
@@ -887,6 +907,12 @@ type
 mkdir
 path_exists
 list_dir
+minimize_all
+volume_get
+volume_set
+volume_mute
+volume_unmute
+volume_toggle_mute
 chrome_state
 chrome_click
 chrome_type

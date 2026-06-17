@@ -14,22 +14,47 @@ async function getJson(path) {
   return response.json();
 }
 
+function canInjectInto(tab) {
+  const url = tab && tab.url ? tab.url : '';
+  return /^https?:\/\//i.test(url) || /^file:\/\//i.test(url);
+}
+
 async function activeTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs && tabs[0];
 }
 
+async function ensureContentScript(tab) {
+  if (!tab || !tab.id) throw new Error('no active tab');
+  if (!canInjectInto(tab)) throw new Error(`content scripts cannot run on ${tab.url || 'this page'}`);
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+}
+
+async function sendToTabWithRetry(tab, message) {
+  if (!tab || !tab.id) throw new Error('no active tab');
+  try {
+    return await chrome.tabs.sendMessage(tab.id, message);
+  } catch (firstError) {
+    const msg = String(firstError && firstError.message ? firstError.message : firstError);
+    if (!msg.includes('Receiving end does not exist') && !msg.includes('Could not establish connection')) {
+      throw firstError;
+    }
+    await ensureContentScript(tab);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    return await chrome.tabs.sendMessage(tab.id, message);
+  }
+}
+
 async function sendToActiveTab(message) {
   const tab = await activeTab();
-  if (!tab || !tab.id) throw new Error('no active tab');
-  return chrome.tabs.sendMessage(tab.id, message);
+  return sendToTabWithRetry(tab, message);
 }
 
 async function captureState() {
   const tab = await activeTab();
   if (!tab || !tab.id) return;
   try {
-    const response = await sendToActiveTab({ type: 'GET_DOM_STATE' });
+    const response = await sendToTabWithRetry(tab, { type: 'GET_DOM_STATE' });
     if (response && response.ok) {
       await postJson('/chrome/update', {
         extension: { version: chrome.runtime.getManifest().version },
@@ -54,6 +79,16 @@ async function captureState() {
   }
 }
 
+async function waitForTabLoad(tabId, timeoutMs = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') return tab;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  return chrome.tabs.get(tabId);
+}
+
 async function runCommand(command) {
   try {
     let response;
@@ -61,9 +96,14 @@ async function runCommand(command) {
       const tab = await activeTab();
       if (!tab || !tab.id) throw new Error('no active tab');
       await chrome.tabs.update(tab.id, { url: command.args.url });
+      const loadedTab = await waitForTabLoad(tab.id, 12000);
+      if (canInjectInto(loadedTab)) {
+        await ensureContentScript(loadedTab).catch(() => {});
+      }
       response = { ok: true, result: { ok: true, action: 'navigate', url: command.args.url } };
     } else {
-      response = await sendToActiveTab({ type: 'RUN_COMMAND', command });
+      const tab = await activeTab();
+      response = await sendToTabWithRetry(tab, { type: 'RUN_COMMAND', command });
     }
     await postJson('/chrome/command/result', {
       id: command.id,
@@ -77,7 +117,7 @@ async function runCommand(command) {
       error: String(error && error.message ? error.message : error)
     });
   }
-  setTimeout(captureState, 300);
+  setTimeout(captureState, 500);
 }
 
 async function pollCommands() {
