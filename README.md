@@ -18,7 +18,9 @@ Desktop apps, Explorer, Chrome tabs, web pages
 - Runs realtime goal sessions over WebSocket.
 - Provides safe filesystem primitives such as `mkdir`, `path_exists`, and `list_dir`.
 - Self-updates from uploaded ZIP bundles and restarts automatically.
-- Includes a Chrome MV3 extension bridge for DOM state and queued click/type/navigate commands.
+- Includes a Chrome MV3 extension bridge for DOM state, tab management, element coordinates, and article paragraph extraction.
+- Supports hybrid browser control: Chrome extension as eyes/helper, Winbridge native Windows input as mouse/keyboard hands.
+- Supports native mouse clicks, hotkeys, key presses, human-like typing, volume control, and minimize-all.
 
 ## Main endpoints
 

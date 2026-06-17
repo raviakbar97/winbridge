@@ -918,6 +918,8 @@ mouse_click
 mouse_right_click
 mouse_double_click
 mouse_scroll
+key_press
+hotkey
 type_human
 chrome_state
 chrome_click
@@ -934,3 +936,50 @@ chrome_activate_tab
 chrome_paragraphs
 chrome_article_text
 ```
+
+
+## 17. Current v1.3.2 operating model
+
+Use Winbridge as a hybrid browser/desktop control layer:
+
+```txt
+Chrome extension = eyes + Chrome helper
+Winbridge native Windows = hands
+```
+
+Prefer this for visible browser-control benchmarks:
+
+1. Use `chrome_new_tab`, `chrome_tabs`, `chrome_activate_tab` for tab management.
+2. Use `chrome_state` to read DOM elements and their `screen_rect`.
+3. Use `chrome_mouse_click`, `chrome_mouse_right_click`, or `chrome_mouse_double_click` for real native mouse input based on DOM element coordinates.
+4. Use `hotkey` for reliable virtual-key combinations such as `ctrl+l`.
+5. Use `type_human` or `chrome_type_human` for visible per-character typing. Pass `clear=true` when the focused field should be selected/cleared first.
+6. Use `chrome_paragraphs` or `chrome_article_text` with `wait=true` to read article paragraphs after the page is actually opened.
+
+Do not shortcut benchmark-style user instructions. If Ravi says “open Google, type query, click result”, do that sequence visibly. Do not directly navigate to the final URL or fetch the answer from the gateway unless he explicitly allows fallback.
+
+Known tested strict benchmark:
+
+```txt
+chrome_new_tab about:blank
+hotkey ctrl+l
+type_human google.com enter=true clear=true
+chrome_state
+chrome_mouse_click Google search box
+type_human "worldcup 2026" enter=true clear=true
+chrome_state
+chrome_mouse_click Wikipedia result
+chrome_state
+chrome_paragraphs wait=true
+```
+
+Relevant fixes included in v1.3.2:
+
+- Native `SendInput` compatibility fixed by avoiding strict global `SendInput.argtypes` that broke `uiautomation`.
+- `hotkey` now uses native virtual-key down/up events instead of UIAutomation string syntax like `^l`.
+- `key_press` was added for keys such as Enter, Esc, Tab, Backspace, arrows, Home/End.
+- `type_human clear=true` performs native Ctrl+A + Backspace before typing.
+- Chrome command waiting was added so actions such as `chrome_paragraphs` can return completed results.
+- `/chrome/commands?view=all` can inspect recent command records without consuming the extension polling queue.
+
+Chrome extension version currently deployed for v1.3 browser helper is `0.1.3`. Because the extension is unpacked, after extension file changes Ravi must reload it manually from `chrome://extensions`.
