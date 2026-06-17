@@ -11,6 +11,9 @@ import logging
 import subprocess
 import traceback
 import threading
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import flask
@@ -22,6 +25,8 @@ import win32api
 import win32con
 import win32gui
 import win32process
+
+from updater import STATUS_FILE, safe_extract_zip
 
 try:
     import uiautomation as auto
@@ -64,6 +69,9 @@ use_uia = _UIAContext()
 
 HOST = "0.0.0.0"
 PORT = 5100
+APP_DIR = Path(__file__).resolve().parent
+STARTED_AT = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+ADMIN_TOKEN = os.environ.get("WINBRIDGE_ADMIN_TOKEN", "")
 
 # ---- ctypes wrappers for focus-stealing workaround ----
 user32 = ctypes.windll.user32
@@ -309,6 +317,64 @@ def action_type(text: str, enter: bool = True):
     raise RuntimeError("No typing backend available — install uiautomation")
 
 
+# ---- admin / self-update helpers ----
+def require_admin_token():
+    """Protect code-update endpoints when WINBRIDGE_ADMIN_TOKEN is configured."""
+    if not ADMIN_TOKEN:
+        return None
+    auth = request.headers.get("Authorization", "")
+    expected = f"Bearer {ADMIN_TOKEN}"
+    if auth != expected:
+        return jsonify(error="unauthorized"), 401
+    return None
+
+
+def update_status() -> Dict[str, Any]:
+    path = APP_DIR / STATUS_FILE
+    if not path.exists():
+        return {"status": "never"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"status": "unknown", "error": str(e)}
+
+
+def _exit_soon():
+    def shutdown_soon():
+        time.sleep(0.25)
+        os._exit(0)
+
+    threading.Thread(target=shutdown_soon, daemon=True).start()
+
+
+def spawn_update_restart(staging_dir: Path):
+    """Spawn updater.py to apply staged files, then stop this server process."""
+    args = [
+        sys.executable,
+        str(APP_DIR / "updater.py"),
+        "--app-dir", str(APP_DIR),
+        "--staging-dir", str(staging_dir),
+        "--old-pid", str(os.getpid()),
+    ]
+    subprocess.Popen(args, cwd=str(APP_DIR), close_fds=True)
+    _exit_soon()
+
+
+def spawn_plain_restart():
+    """Start a fresh server.py process, then stop this server process."""
+    subprocess.Popen([sys.executable, str(APP_DIR / "server.py")], cwd=str(APP_DIR), close_fds=True)
+    _exit_soon()
+
+
+def make_update_bundle_staging(upload) -> Path:
+    payload = upload.read()
+    if not payload:
+        raise ValueError("empty update bundle")
+    staging_dir = APP_DIR / ".winbridge-update-staging" / uuid.uuid4().hex
+    safe_extract_zip(payload, staging_dir)
+    return staging_dir
+
+
 # ---- Flask routes ----
 app = Flask(__name__)
 
@@ -330,6 +396,49 @@ def docs():
 @app.route("/health")
 def health():
     return jsonify(status="ok", service="winbridge", uia=HAS_UIA)
+
+
+@app.route("/admin/version")
+def admin_version():
+    return jsonify(
+        service="winbridge",
+        started_at=STARTED_AT,
+        pid=os.getpid(),
+        app_dir=str(APP_DIR),
+        admin_token_required=bool(ADMIN_TOKEN),
+        update_status=update_status(),
+    )
+
+
+@app.route("/admin/update/status")
+def admin_update_status():
+    return jsonify(update_status())
+
+
+@app.route("/admin/restart", methods=["POST"])
+def admin_restart():
+    unauthorized = require_admin_token()
+    if unauthorized:
+        return unauthorized
+    spawn_plain_restart()
+    return jsonify(status="restarting", pid=os.getpid())
+
+
+@app.route("/admin/update", methods=["POST"])
+def admin_update():
+    unauthorized = require_admin_token()
+    if unauthorized:
+        return unauthorized
+    try:
+        upload = request.files.get("file")
+        if upload is None:
+            return jsonify(error="multipart file field 'file' is required"), 400
+        staging_dir = make_update_bundle_staging(upload)
+        spawn_update_restart(staging_dir)
+        return jsonify(status="updating", staging_dir=str(staging_dir), pid=os.getpid())
+    except Exception as e:
+        logger.exception("POST /admin/update")
+        return jsonify(error=str(e)), 400
 
 
 @app.route("/screen/state")
@@ -411,10 +520,14 @@ if __name__ == "__main__":
     print("  Endpoints:")
     print("    GET  /docs           Agent documentation (this file)")
     print("    GET  /health         Server status")
-    print("    GET  /screen/state   Focused + visible windows")
-    print("    POST /action/open    Launch app or path")
-    print("    POST /action/focus   Focus window by pid|title")
-    print("    POST /action/type    Type text + Enter")
+    print("    GET  /screen/state          Focused + visible windows")
+    print("    POST /action/open           Launch app or path")
+    print("    POST /action/focus          Focus window by pid|title")
+    print("    POST /action/type           Type text + Enter")
+    print("    GET  /admin/version         Version + update status")
+    print("    GET  /admin/update/status   Last update status")
+    print("    POST /admin/update          Upload ZIP, apply, restart")
+    print("    POST /admin/restart         Restart server")
     print()
     print(f"  Listening on http://{HOST}:{PORT}")
     print("=" * 54)

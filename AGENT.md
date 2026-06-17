@@ -122,7 +122,68 @@ Content-Type: application/json
 
 ---
 
-## 6. Typical agent workflow
+## 6. Admin: version, update, and restart
+
+> These endpoints can replace Winbridge source code and restart the app. Set `WINBRIDGE_ADMIN_TOKEN` before exposing them outside a trusted LAN.
+
+### Read version/status
+
+```
+GET /admin/version
+GET /admin/update/status
+```
+
+Example `/admin/version` response:
+
+```json
+{
+  "service": "winbridge",
+  "started_at": "2026-06-17T12:00:00Z",
+  "pid": 1234,
+  "app_dir": "D:\\winbridge",
+  "admin_token_required": true,
+  "update_status": {"status": "never"}
+}
+```
+
+### Restart only
+
+```
+POST /admin/restart
+Authorization: Bearer <WINBRIDGE_ADMIN_TOKEN>
+```
+
+If `WINBRIDGE_ADMIN_TOKEN` is unset, the endpoint is allowed without auth for bootstrap/dev, but this is not recommended.
+
+### Self-update from an uploaded ZIP
+
+```
+POST /admin/update
+Authorization: Bearer <WINBRIDGE_ADMIN_TOKEN>
+Content-Type: multipart/form-data
+file=@winbridge-update.zip
+```
+
+Allowed bundle paths:
+- `server.py`
+- `updater.py`
+- `AGENT.md`
+- `requirements.txt`
+- `chrome_extension/*`
+- `tests/*`
+
+Update behavior:
+1. Extract ZIP into a staging directory with path traversal protection.
+2. Spawn `updater.py` as a detached process.
+3. Current server exits.
+4. Updater backs up replaced files into `backups/<timestamp>/`.
+5. Updater copies staged files into the app directory.
+6. Updater starts a fresh `python server.py`.
+7. Status is written to `.winbridge-update-status.json`.
+
+---
+
+## 7. Typical agent workflow
 
 ```python
 import requests

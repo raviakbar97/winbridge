@@ -1,9 +1,6 @@
 __pycache__/
-*.pyc
-*.pyo
-*.log
-*.egg-info/
-dist/
-build/
-venv/
-.venv/
+*.py[cod]
+.pytest_cache/
+.winbridge-update-staging/
+backups/
+.winbridge-update-status.json
