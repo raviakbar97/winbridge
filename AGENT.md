@@ -183,7 +183,67 @@ Update behavior:
 
 ---
 
-## 7. Typical agent workflow
+## 7. Realtime agent WebSocket
+
+```
+WS /agent/ws
+```
+
+The WebSocket accepts JSON messages and replies with JSON. It keeps one connection open so an agent can run an observe → action → observe loop until a goal is complete.
+
+### Ping
+
+```json
+{"id":"1","type":"ping"}
+```
+
+Response:
+
+```json
+{"id":"1","type":"pong","ok":true}
+```
+
+### Observe screen/window state
+
+```json
+{"id":"2","type":"observe"}
+```
+
+Response type: `state`, same data shape as `GET /screen/state`.
+
+### Run an action
+
+```json
+{"id":"3","type":"action","action":"mkdir","args":{"path":"E:\\AliceWsTest"}}
+```
+
+Response:
+
+```json
+{"id":"3","type":"result","ok":true,"action":"mkdir","data":{"exists":true}}
+```
+
+Supported initial actions:
+- `screen_state` — same as observe
+- `open` — args: `{target, working_dir?, args?}`
+- `focus` — args: `{pid? , title?}`
+- `type` — args: `{text, enter?}`; default `enter` is `false`
+- `mkdir` — args: `{path, parents?, exist_ok?}`
+- `path_exists` — args: `{path}`
+- `list_dir` — args: `{path, limit?}`
+
+Example goal loop for creating a folder on E:
+
+```json
+{"id":"1","type":"observe"}
+{"id":"2","type":"action","action":"open","args":{"target":"explorer.exe","args":["E:\\\\"]}}
+{"id":"3","type":"action","action":"mkdir","args":{"path":"E:\\AliceWsTest"}}
+{"id":"4","type":"action","action":"path_exists","args":{"path":"E:\\AliceWsTest"}}
+```
+
+---
+
+## 8. Typical agent workflow
 
 ```python
 import requests

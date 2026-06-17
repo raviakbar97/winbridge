@@ -18,6 +18,7 @@ from typing import Optional, List, Dict, Any
 
 import flask
 from flask import Flask, request, jsonify
+from flask_sock import Sock
 import psutil
 import ctypes
 from ctypes import wintypes
@@ -27,6 +28,7 @@ import win32gui
 import win32process
 
 from updater import STATUS_FILE, safe_extract_zip
+from agent_ws import dispatch_ws_message, validate_path
 
 try:
     import uiautomation as auto
@@ -375,8 +377,83 @@ def make_update_bundle_staging(upload) -> Path:
     return staging_dir
 
 
+# ---- WebSocket action helpers ----
+def get_screen_state_data() -> Dict[str, Any]:
+    hwnd = win32gui.GetForegroundWindow()
+    name, pid = process_of(hwnd)
+    title = window_title(hwnd)
+    state = window_state(hwnd)
+    typing = can_type(hwnd)
+    windows = enum_windows()
+    return dict(
+        focused_window=dict(
+            pid=pid, name=name, title=title,
+            state=state, ready_for_typing=typing,
+        ),
+        visible_windows=windows,
+        count=len(windows),
+    )
+
+
+def ws_action_open(args: dict) -> Dict[str, Any]:
+    target = args.get("target")
+    if not target:
+        raise ValueError("target is required")
+    return action_open(target=target, cwd=args.get("working_dir"), args=args.get("args"))
+
+
+def ws_action_focus(args: dict) -> Dict[str, Any]:
+    return action_focus(pid=args.get("pid"), title=args.get("title"))
+
+
+def ws_action_type(args: dict) -> Dict[str, Any]:
+    text = args.get("text")
+    if text is None:
+        raise ValueError("text is required")
+    action_type(text=str(text), enter=bool(args.get("enter", False)))
+    return {"status": "ok", "chars": len(str(text)), "enter": bool(args.get("enter", False))}
+
+
+def ws_action_mkdir(args: dict) -> Dict[str, Any]:
+    path = validate_path(args.get("path", ""))
+    path.mkdir(parents=bool(args.get("parents", True)), exist_ok=bool(args.get("exist_ok", True)))
+    return {"status": "created", "path": str(path), "exists": path.exists()}
+
+
+def ws_action_path_exists(args: dict) -> Dict[str, Any]:
+    path = validate_path(args.get("path", ""))
+    return {"path": str(path), "exists": path.exists(), "is_dir": path.is_dir(), "is_file": path.is_file()}
+
+
+def ws_action_list_dir(args: dict) -> Dict[str, Any]:
+    path = validate_path(args.get("path", ""))
+    if not path.exists():
+        raise ValueError(f"path does not exist: {path}")
+    if not path.is_dir():
+        raise ValueError(f"path is not a directory: {path}")
+    limit = int(args.get("limit", 100))
+    entries = []
+    for child in list(path.iterdir())[:limit]:
+        entries.append({"name": child.name, "path": str(child), "is_dir": child.is_dir(), "is_file": child.is_file()})
+    return {"path": str(path), "count": len(entries), "entries": entries}
+
+
+def ws_actions() -> Dict[str, Any]:
+    return {
+        "observe": lambda args: get_screen_state_data(),
+        "screen_state": lambda args: get_screen_state_data(),
+        "open": ws_action_open,
+        "focus": ws_action_focus,
+        "type": ws_action_type,
+        "mkdir": ws_action_mkdir,
+        "path_exists": ws_action_path_exists,
+        "list_dir": ws_action_list_dir,
+    }
+
+
 # ---- Flask routes ----
 app = Flask(__name__)
+sock = Sock(app)
 
 DOCS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AGENT.md")
 _DOCS_CACHE: Optional[str] = None
@@ -444,23 +521,30 @@ def admin_update():
 @app.route("/screen/state")
 def screen_state():
     try:
-        hwnd = win32gui.GetForegroundWindow()
-        name, pid = process_of(hwnd)
-        title = window_title(hwnd)
-        state = window_state(hwnd)
-        typing = can_type(hwnd)
-        windows = enum_windows()
-        return jsonify(
-            focused_window=dict(
-                pid=pid, name=name, title=title,
-                state=state, ready_for_typing=typing,
-            ),
-            visible_windows=windows,
-            count=len(windows),
-        )
+        return jsonify(get_screen_state_data())
     except Exception:
         logger.exception("GET /screen/state")
         return jsonify(error=traceback.format_exc()), 500
+
+
+@sock.route("/agent/ws")
+def agent_ws(ws):
+    logger.info("WebSocket client connected: /agent/ws")
+    actions = ws_actions()
+    while True:
+        raw = ws.receive()
+        if raw is None:
+            logger.info("WebSocket client disconnected: /agent/ws")
+            break
+        try:
+            message = json.loads(raw)
+            if not isinstance(message, dict):
+                response = {"id": None, "type": "error", "ok": False, "error": "message must be a JSON object"}
+            else:
+                response = dispatch_ws_message(message, actions)
+        except Exception as e:
+            response = {"id": None, "type": "error", "ok": False, "error": str(e)}
+        ws.send(json.dumps(response, ensure_ascii=False))
 
 
 @app.route("/action/open", methods=["POST"])

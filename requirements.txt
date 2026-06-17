@@ -1,4 +1,5 @@
 flask>=3.0
+flask-sock>=0.7
 pywin32>=306
 psutil>=5.9
 uiautomation>=2.0

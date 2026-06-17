@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List
 
-ALLOWED_TOP_LEVEL_FILES = {"server.py", "AGENT.md", "requirements.txt", "updater.py"}
+ALLOWED_TOP_LEVEL_FILES = {"server.py", "AGENT.md", "requirements.txt", "updater.py", "agent_ws.py"}
 ALLOWED_DIR_PREFIXES = ("chrome_extension/", "tests/")
 STATUS_FILE = ".winbridge-update-status.json"
 
@@ -74,6 +74,20 @@ def safe_extract_zip(payload: bytes, destination: Path) -> List[Path]:
 
 def build_restart_command(app_dir: Path) -> List[str]:
     return [sys.executable, str(app_dir / "server.py")]
+
+
+def install_requirements_if_present(app_dir: Path, staged_files: List[Path], staging_dir: Path) -> bool:
+    """Install requirements when requirements.txt is part of the update bundle."""
+    staged_rels = {str(p.relative_to(staging_dir)).replace(os.sep, "/") for p in staged_files}
+    if "requirements.txt" not in staged_rels:
+        return False
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", str(app_dir / "requirements.txt")],
+        cwd=str(app_dir),
+        check=True,
+        timeout=180,
+    )
+    return True
 
 
 def _write_status(app_dir: Path, data: dict) -> None:
@@ -134,7 +148,9 @@ def apply_update_and_restart(app_dir: Path, staging_dir: Path, old_pid: int) -> 
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
 
-        _write_status(app_dir, {"status": "success", "backup_dir": str(backup_dir), "files": [str(p.relative_to(staging_dir)).replace(os.sep, "/") for p in staged_files]})
+        requirements_installed = install_requirements_if_present(app_dir, staged_files, staging_dir)
+
+        _write_status(app_dir, {"status": "success", "backup_dir": str(backup_dir), "files": [str(p.relative_to(staging_dir)).replace(os.sep, "/") for p in staged_files], "requirements_installed": requirements_installed})
         subprocess.Popen(build_restart_command(app_dir), cwd=str(app_dir), close_fds=True)
     except Exception as exc:
         _write_status(app_dir, {"status": "failed", "error": repr(exc), "backup_dir": str(backup_dir)})

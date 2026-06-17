@@ -25,6 +25,7 @@ def test_safe_extract_rejects_path_traversal(tmp_path):
 def test_safe_extract_allows_expected_source_files(tmp_path):
     payload = make_zip({
         "server.py": "print('ok')",
+        "agent_ws.py": "print('ok')",
         "AGENT.md": "docs",
         "requirements.txt": "flask",
         "chrome_extension/manifest.json": "{}",
@@ -32,6 +33,7 @@ def test_safe_extract_allows_expected_source_files(tmp_path):
     files = safe_extract_zip(payload, tmp_path)
     assert sorted(str(p.relative_to(tmp_path)).replace(os.sep, "/") for p in files) == [
         "AGENT.md",
+        "agent_ws.py",
         "chrome_extension/manifest.json",
         "requirements.txt",
         "server.py",
