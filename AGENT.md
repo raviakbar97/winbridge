@@ -915,6 +915,12 @@ volume_unmute
 volume_toggle_mute
 chrome_state
 chrome_click
+chrome_right_click
 chrome_type
 chrome_navigate
+chrome_new_tab
+chrome_tabs
+chrome_activate_tab
+chrome_paragraphs
+chrome_article_text
 ```

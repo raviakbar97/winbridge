@@ -506,8 +506,14 @@ def ws_actions() -> Dict[str, Any]:
         "volume_toggle_mute": ws_action_volume_toggle_mute,
         "chrome_state": ws_action_chrome_state,
         "chrome_click": lambda args: ws_action_chrome_command("click", args),
+        "chrome_right_click": lambda args: ws_action_chrome_command("right_click", args),
         "chrome_type": lambda args: ws_action_chrome_command("type", args),
         "chrome_navigate": lambda args: ws_action_chrome_command("navigate", args),
+        "chrome_new_tab": lambda args: ws_action_chrome_command("new_tab", args),
+        "chrome_tabs": lambda args: ws_action_chrome_command("tabs", args),
+        "chrome_activate_tab": lambda args: ws_action_chrome_command("activate_tab", args),
+        "chrome_paragraphs": lambda args: ws_action_chrome_command("paragraphs", args),
+        "chrome_article_text": lambda args: ws_action_chrome_command("article_text", args),
     }
 
 
