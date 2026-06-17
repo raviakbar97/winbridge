@@ -29,6 +29,7 @@ import win32process
 
 from updater import STATUS_FILE, safe_extract_zip
 from agent_ws import dispatch_ws_message, validate_path
+from agent_session import SessionStore
 
 try:
     import uiautomation as auto
@@ -454,6 +455,7 @@ def ws_actions() -> Dict[str, Any]:
 # ---- Flask routes ----
 app = Flask(__name__)
 sock = Sock(app)
+SESSIONS = SessionStore()
 
 DOCS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AGENT.md")
 _DOCS_CACHE: Optional[str] = None
@@ -527,10 +529,24 @@ def screen_state():
         return jsonify(error=traceback.format_exc()), 500
 
 
+@app.route("/agent/sessions")
+def agent_sessions():
+    return jsonify(sessions=SESSIONS.list())
+
+
+@app.route("/agent/session/<session_id>")
+def agent_session(session_id):
+    session = SESSIONS.get(session_id)
+    if session is None:
+        return jsonify(error="session not found"), 404
+    return jsonify(session)
+
+
 @sock.route("/agent/ws")
 def agent_ws(ws):
     logger.info("WebSocket client connected: /agent/ws")
     actions = ws_actions()
+    current_session_id = None
     while True:
         raw = ws.receive()
         if raw is None:
@@ -540,8 +556,24 @@ def agent_ws(ws):
             message = json.loads(raw)
             if not isinstance(message, dict):
                 response = {"id": None, "type": "error", "ok": False, "error": "message must be a JSON object"}
+            elif message.get("type") == "start_session":
+                session = SESSIONS.create(goal=message.get("goal", ""))
+                current_session_id = session["id"]
+                response = {"id": message.get("id"), "type": "session", "ok": True, "session": session}
+            elif message.get("type") == "finish_session":
+                session_id = message.get("session_id") or current_session_id
+                if not session_id:
+                    response = {"id": message.get("id"), "type": "error", "ok": False, "error": "session_id is required"}
+                else:
+                    session = SESSIONS.finish(session_id, status=message.get("status", "done"))
+                    response = {"id": message.get("id"), "type": "session", "ok": True, "session": session}
             else:
+                session_id = message.get("session_id") or current_session_id
+                if session_id:
+                    SESSIONS.record(session_id, "message", {"message": message})
                 response = dispatch_ws_message(message, actions)
+                if session_id:
+                    SESSIONS.record(session_id, "response", {"response": response})
         except Exception as e:
             response = {"id": None, "type": "error", "ok": False, "error": str(e)}
         ws.send(json.dumps(response, ensure_ascii=False))

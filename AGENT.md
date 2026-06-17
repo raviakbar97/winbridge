@@ -191,6 +191,27 @@ WS /agent/ws
 
 The WebSocket accepts JSON messages and replies with JSON. It keeps one connection open so an agent can run an observe → action → observe loop until a goal is complete.
 
+### Start a goal/session
+
+```json
+{"id":"s1","type":"start_session","goal":"Buka Explorer dan buat folder di E"}
+```
+
+Response type: `session`. Later messages on the same WebSocket are recorded to that session automatically. You can also pass `session_id` explicitly on any message.
+
+### Finish a session
+
+```json
+{"id":"s2","type":"finish_session","status":"done"}
+```
+
+Inspect sessions over HTTP:
+
+```
+GET /agent/sessions
+GET /agent/session/<session_id>
+```
+
 ### Ping
 
 ```json

@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List
 
-ALLOWED_TOP_LEVEL_FILES = {"server.py", "AGENT.md", "requirements.txt", "updater.py", "agent_ws.py"}
+ALLOWED_TOP_LEVEL_FILES = {"server.py", "AGENT.md", "requirements.txt", "updater.py", "agent_ws.py", "agent_session.py"}
 ALLOWED_DIR_PREFIXES = ("chrome_extension/", "tests/")
 STATUS_FILE = ".winbridge-update-status.json"
 
