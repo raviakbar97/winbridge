@@ -409,7 +409,9 @@ class INPUT(ctypes.Structure):
 
 
 SendInput = user32.SendInput
-SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+# Do not set global argtypes on user32.SendInput. Other libraries such as
+# uiautomation also call the same function with their own INPUT structure; a
+# strict argtypes binding here makes those calls fail with pointer type errors.
 
 
 def _send_mouse(flags: int, data: int = 0):
