@@ -252,6 +252,22 @@ Supported initial actions:
 - `mkdir` — args: `{path, parents?, exist_ok?}`
 - `path_exists` — args: `{path}`
 - `list_dir` — args: `{path, limit?}`
+- `chrome_state` — latest DOM state pushed by the extension
+- `chrome_click` — enqueue extension click command: `{element_id}`
+- `chrome_type` — enqueue extension type command: `{element_id, text, enter?, clear?}`
+- `chrome_navigate` — enqueue tab navigation command: `{url}`
+
+Chrome bridge HTTP endpoints:
+
+```
+POST /chrome/update
+GET  /chrome/state
+POST /chrome/command
+GET  /chrome/commands
+POST /chrome/command/result
+```
+
+Load the extension from `chrome_extension/` as an unpacked MV3 extension. It polls Winbridge on `127.0.0.1:5100`, pushes active-tab DOM state, and executes queued commands.
 
 Example goal loop for creating a folder on E:
 

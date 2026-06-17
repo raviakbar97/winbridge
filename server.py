@@ -30,6 +30,7 @@ import win32process
 from updater import STATUS_FILE, safe_extract_zip
 from agent_ws import dispatch_ws_message, validate_path
 from agent_session import SessionStore
+from chrome_bridge import ChromeBridge
 
 try:
     import uiautomation as auto
@@ -439,6 +440,14 @@ def ws_action_list_dir(args: dict) -> Dict[str, Any]:
     return {"path": str(path), "count": len(entries), "entries": entries}
 
 
+def ws_action_chrome_state(args: dict) -> Dict[str, Any]:
+    return CHROME.get_state()
+
+
+def ws_action_chrome_command(action: str, args: dict) -> Dict[str, Any]:
+    return CHROME.enqueue(action, args)
+
+
 def ws_actions() -> Dict[str, Any]:
     return {
         "observe": lambda args: get_screen_state_data(),
@@ -449,6 +458,10 @@ def ws_actions() -> Dict[str, Any]:
         "mkdir": ws_action_mkdir,
         "path_exists": ws_action_path_exists,
         "list_dir": ws_action_list_dir,
+        "chrome_state": ws_action_chrome_state,
+        "chrome_click": lambda args: ws_action_chrome_command("click", args),
+        "chrome_type": lambda args: ws_action_chrome_command("type", args),
+        "chrome_navigate": lambda args: ws_action_chrome_command("navigate", args),
     }
 
 
@@ -456,6 +469,7 @@ def ws_actions() -> Dict[str, Any]:
 app = Flask(__name__)
 sock = Sock(app)
 SESSIONS = SessionStore()
+CHROME = ChromeBridge()
 
 DOCS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AGENT.md")
 _DOCS_CACHE: Optional[str] = None
@@ -540,6 +554,46 @@ def agent_session(session_id):
     if session is None:
         return jsonify(error="session not found"), 404
     return jsonify(session)
+
+
+@app.route("/chrome/update", methods=["POST"])
+def chrome_update():
+    data = request.get_json(silent=True) or {}
+    return jsonify(CHROME.update_state(data))
+
+
+@app.route("/chrome/state")
+def chrome_state():
+    return jsonify(CHROME.get_state())
+
+
+@app.route("/chrome/command", methods=["POST"])
+def chrome_command():
+    data = request.get_json(silent=True) or {}
+    try:
+        action = data.get("action")
+        args = data.get("args") or {}
+        return jsonify(CHROME.enqueue(action, args))
+    except Exception as e:
+        return jsonify(error=str(e)), 400
+
+
+@app.route("/chrome/commands")
+def chrome_commands():
+    limit = int(request.args.get("limit", 20))
+    return jsonify(commands=CHROME.poll_commands(limit=limit))
+
+
+@app.route("/chrome/command/result", methods=["POST"])
+def chrome_command_result():
+    data = request.get_json(silent=True) or {}
+    command_id = data.get("id")
+    try:
+        return jsonify(CHROME.record_result(command_id, data))
+    except KeyError as e:
+        return jsonify(error=str(e)), 404
+    except Exception as e:
+        return jsonify(error=str(e)), 400
 
 
 @sock.route("/agent/ws")
