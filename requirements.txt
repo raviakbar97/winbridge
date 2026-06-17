@@ -1,0 +1,4 @@
+flask>=3.0
+pywin32>=306
+psutil>=5.9
+uiautomation>=2.0
