@@ -592,6 +592,21 @@ def ws_action_type_human(args: dict) -> Dict[str, Any]:
     return {"status": "ok", "chars": len(text), "enter": bool(args.get("enter", False))}
 
 
+def ws_action_hotkey(args: dict) -> Dict[str, Any]:
+    keys = args.get("keys") or []
+    if isinstance(keys, str):
+        keys = [part.strip() for part in keys.split("+") if part.strip()]
+    if not keys:
+        raise ValueError("keys are required")
+    combo = "".join({"ctrl": "^", "control": "^", "alt": "%", "shift": "+"}.get(str(k).lower(), f"{{{k}}}" if len(str(k)) > 1 else str(k)) for k in keys)
+    if HAS_UIA:
+        with use_uia as uia:
+            uia.SendKeys(combo, waitTime=float(args.get("wait", 0.05)))
+    else:
+        raise RuntimeError("hotkey requires uiautomation")
+    return {"status": "ok", "keys": keys, "combo": combo}
+
+
 def _chrome_element_rect(element_id: str) -> Dict[str, Any]:
     state = CHROME.get_state()
     for element in state.get("elements", []):
@@ -652,6 +667,7 @@ def ws_actions() -> Dict[str, Any]:
         "mouse_double_click": lambda args: ws_action_mouse_click({**args, "clicks": 2}),
         "mouse_scroll": ws_action_mouse_scroll,
         "type_human": ws_action_type_human,
+        "hotkey": ws_action_hotkey,
         "chrome_state": ws_action_chrome_state,
         "chrome_click": lambda args: ws_action_chrome_command("click", args),
         "chrome_right_click": lambda args: ws_action_chrome_command("right_click", args),
