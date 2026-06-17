@@ -688,7 +688,20 @@ def ws_action_chrome_state(args: dict) -> Dict[str, Any]:
 
 
 def ws_action_chrome_command(action: str, args: dict) -> Dict[str, Any]:
-    return CHROME.enqueue(action, args)
+    command = CHROME.enqueue(action, args)
+    wait = bool((args or {}).get("wait", action in {"tabs", "paragraphs", "article_text"}))
+    if not wait:
+        return command
+    timeout = float((args or {}).get("timeout", 12))
+    start = time.time()
+    while time.time() - start < timeout:
+        latest = CHROME.get_command(command["id"])
+        if latest and latest.get("status") in {"done", "failed"}:
+            return latest
+        time.sleep(0.2)
+    latest = CHROME.get_command(command["id"]) or command
+    latest["wait_timeout"] = True
+    return latest
 
 
 def ws_actions() -> Dict[str, Any]:
@@ -848,6 +861,8 @@ def chrome_command():
 @app.route("/chrome/commands")
 def chrome_commands():
     limit = int(request.args.get("limit", 20))
+    if request.args.get("view") in {"1", "true", "all"}:
+        return jsonify(commands=CHROME.list_commands(limit=limit))
     return jsonify(commands=CHROME.poll_commands(limit=limit))
 
 

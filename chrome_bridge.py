@@ -79,3 +79,8 @@ class ChromeBridge:
         with self._lock:
             cmd = self._commands.get(command_id)
             return dict(cmd) if cmd else None
+
+    def list_commands(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._lock:
+            commands = list(self._commands.values())[-limit:]
+            return [dict(cmd) for cmd in commands]
